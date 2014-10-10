@@ -1,7 +1,3 @@
-
-
-
-
 #UDP Socket Test 2.0
 
 import os
