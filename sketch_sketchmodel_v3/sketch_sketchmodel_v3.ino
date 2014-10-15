@@ -2,6 +2,9 @@
 #include <Math.h>
 #include <SoftwareSerial.h>
 #include <TinyGPS.h>
+#include <Wire.h>
+#include <Adafruit_Sensor.h>
+#include <Adafruit_HMC5883_U.h>
 
 
 #define RXPIN 2
@@ -20,10 +23,22 @@ Servo myservo;  // create servo object to control a servo
 
 float destination[2] = {48.85837, 2.294481};  // lat/long of paris
 
+Adafruit_HMC5883_Unified mag = Adafruit_HMC5883_Unified(12345);
+
 void getgps(TinyGPS &gps);
 
 void setup()  // set up servo
 {
+  Serial.begin(9600);
+   /* Initialise the sensor */
+  if(!mag.begin())
+  {
+    /* There was a problem detecting the HMC5883 ... check your connections */
+    Serial.println("Ooops, no HMC5883 detected ... Check your wiring!");
+    while(1);
+  }
+  displaySensorDetails();
+  
   myservo.attach(4); // servo is in output pin 4
    // Sets baud rate of your terminal program
   Serial.begin(TERMBAUD);
@@ -38,7 +53,7 @@ void setup()  // set up servo
 
 void loop() // main loop
 {
-  float theta = 0;
+  float headingDegrees;
   float latitude, longitude;
 
   while (uart_gps.available())
@@ -47,6 +62,41 @@ void loop() // main loop
     if (gps.encode(c)) //when encode() returns true, a valid sentence
                       //has just changed the gps object's internal state
     {
+       /* Get a new sensor event */ 
+        sensors_event_t event; 
+        mag.getEvent(&event);
+       
+        /* Display the results (magnetic vector values are in micro-Tesla (uT)) */
+        Serial.print("X: "); Serial.print(event.magnetic.x); Serial.print("  ");
+        Serial.print("Y: "); Serial.print(event.magnetic.y); Serial.print("  ");
+        Serial.print("Z: "); Serial.print(event.magnetic.z); Serial.print("  ");Serial.println("uT");
+      
+        // Hold the module so that Z is pointing 'up' and you can measure the heading with x&y
+        // Calculate heading when the magnetometer is level, then correct for signs of axis.
+        float heading = atan2(event.magnetic.x, -event.magnetic.z);
+        
+        // Once you have your heading, you must then add your 'Declination Angle', which is the 'Error' of the magnetic field in your location.
+        // Find yours here: http://www.magnetic-declination.com/
+        // Mine is: -13* 2' W, which is ~13 Degrees, or (which we need) 0.22 radians
+        // If you cannot find your Declination, comment out these two lines, your compass will be slightly off.
+        float declinationAngle = 0.24;
+        heading += declinationAngle;
+        
+        // Correct for when signs are reversed.
+        if(heading < 0)
+          heading += 2*PI;
+          
+        // Check for wrap due to addition of declination.
+        if(heading > 2*PI)
+          heading -= 2*PI;
+         
+        // Convert radians to degrees for readability.
+        float headingDegrees = heading * 180/M_PI; 
+        
+        Serial.print("Heading (degrees): "); Serial.println(headingDegrees);
+        
+        delay(500);
+      
       getgps(gps);
       // process new gps info here
 
@@ -64,17 +114,17 @@ void loop() // main loop
                   *cos(destination[0])*cos(destination[1]-longitude));
                   
       Serial.print("tc1: ");
-      Serial.print(tc1);
+      Serial.println(tc1);
 
       tc1 = (int)((tc1 % 2*M_PI) * 360/M_PI)%360;
       Serial.print("new tc1: ");
-      Serial.print(tc1);
+      Serial.println(tc1);
 
       // calculate difference
-      int servoPosition = (int) (360 - (theta - tc1));
+      int servoPosition = (int) (360 - (headingDegrees - tc1));
 
       Serial.print("servoPosition: ");
-      Serial.print(servoPositon);
+      Serial.println(servoPosition);
       
       myservo.write(360 - servoPosition);
       
@@ -132,4 +182,20 @@ void getgps(TinyGPS &gps)
   // Here you can print the number of satellites in view
 //  Serial.print("Satellites: ");
   Serial.println(gps.satellites());
+}
+
+void displaySensorDetails(void)
+{
+  sensor_t sensor;
+  mag.getSensor(&sensor);
+  Serial.println("------------------------------------");
+  Serial.print  ("Sensor:       "); Serial.println(sensor.name);
+  Serial.print  ("Driver Ver:   "); Serial.println(sensor.version);
+  Serial.print  ("Unique ID:    "); Serial.println(sensor.sensor_id);
+  Serial.print  ("Max Value:    "); Serial.print(sensor.max_value); Serial.println(" uT");
+  Serial.print  ("Min Value:    "); Serial.print(sensor.min_value); Serial.println(" uT");
+  Serial.print  ("Resolution:   "); Serial.print(sensor.resolution); Serial.println(" uT");  
+  Serial.println("------------------------------------");
+  Serial.println("");
+  delay(500);
 }
